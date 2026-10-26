@@ -83,9 +83,13 @@ jobs:
             echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
             docker pull "$IMAGE"
             docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+            # Сеть стека Loki+Grafana: через неё приложение отправляет логи в Loki по имени loki.
+            docker network inspect logging >/dev/null 2>&1 || docker network create logging
             docker run -d \
               --name "$CONTAINER_NAME" \
               --restart unless-stopped \
+              --network logging \
+              -e LOKI_URL=http://loki:3100 \
               -p "$APP_PORT:8000" \
               "$IMAGE"
             docker logout "$REGISTRY"

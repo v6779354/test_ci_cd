@@ -1,4 +1,6 @@
+import json
 from datetime import datetime, timezone
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -103,3 +105,57 @@ def test_timezones_list():
     # Каждый город из списка должен находиться конвертером.
     for name in cities:
         assert convert("12.00", name).status_code == 200
+
+
+class FakeResponse:
+    status = 204
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def test_send_log_to_loki_posts_push_payload(monkeypatch):
+    from app.loki import send_log_to_loki
+
+    monkeypatch.setenv("LOKI_URL", "http://loki:3100/")
+    with mock.patch("urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
+        assert send_log_to_loki("привет", "error", endpoint="test") is True
+
+    request = urlopen.call_args.args[0]
+    assert request.full_url == "http://loki:3100/loki/api/v1/push"
+    assert request.get_method() == "POST"
+    assert request.get_header("Content-type") == "application/json"
+    stream = json.loads(request.data)["streams"][0]
+    assert stream["stream"] == {"app": "server-time", "level": "error", "endpoint": "test"}
+    timestamp, message = stream["values"][0]
+    assert message == "привет"
+    assert timestamp.isdigit() and len(timestamp) == 19
+
+
+def test_send_log_to_loki_without_url_does_nothing(monkeypatch):
+    from app.loki import send_log_to_loki
+
+    monkeypatch.delenv("LOKI_URL", raising=False)
+    with mock.patch("urllib.request.urlopen") as urlopen:
+        assert send_log_to_loki("привет") is False
+    urlopen.assert_not_called()
+
+
+def test_send_log_to_loki_survives_loki_down(monkeypatch):
+    from app.loki import send_log_to_loki
+
+    monkeypatch.setenv("LOKI_URL", "http://loki:3100")
+    with mock.patch("urllib.request.urlopen", side_effect=OSError("connection refused")):
+        assert send_log_to_loki("привет") is False
+
+
+def test_post_log_endpoint():
+    with mock.patch("app.main.send_log_to_loki", return_value=True) as send:
+        response = client.post("/log", json={"message": "проверка", "level": "warning"})
+    assert response.status_code == 200
+    assert response.json() == {"sent": True}
+    send.assert_called_once_with("проверка", "warning", endpoint="log")
+    assert client.post("/log", json={"message": "x", "level": "fatal"}).status_code == 422
