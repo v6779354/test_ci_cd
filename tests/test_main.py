@@ -88,3 +88,18 @@ def test_convert_invalid_input():
     assert convert("25.00", "Москва").status_code == 422
     assert convert("пятнадцать", "Москва").status_code == 422
     assert convert("15.00", "Атлантида").status_code == 422
+
+
+def test_timezones_list():
+    response = client.get("/timezones")
+    assert response.status_code == 200
+    cities = {c["name"]: c for c in response.json()}
+    assert cities["Екатеринбург"] == {
+        "name": "Екатеринбург", "zone": "Asia/Yekaterinburg", "utc_offset": "+05:00",
+    }
+    assert "Ростов-на-Дону" in cities
+    assert "Санкт-Петербург" in cities
+    assert "Спб" not in cities
+    # Каждый город из списка должен находиться конвертером.
+    for name in cities:
+        assert convert("12.00", name).status_code == 200
