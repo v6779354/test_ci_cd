@@ -52,3 +52,39 @@ def test_datetime():
     assert data["date"] == iso.date().isoformat()
     assert data["time"] == iso.time().isoformat()
     assert abs((datetime.now(timezone.utc) - iso).total_seconds()) < 5
+
+
+def convert(time, tz):
+    return client.get("/convert", params={"time": time, "tz": tz})
+
+
+def test_convert_russian_city():
+    response = convert("15.00", "Екатеринбург")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["time"] == "20.00"
+    assert data["timezone"] == "Asia/Yekaterinburg"
+    assert data["utc_offset"] == "+05:00"
+    assert data["day_shift"] == 0
+
+
+def test_convert_keeps_separator_and_seconds():
+    assert convert("15:00", "Москва").json()["time"] == "18:00"
+    assert convert("15:00:30", "москва").json()["time"] == "18:00:30"
+
+
+def test_convert_other_name_forms():
+    for tz in ("Asia/Yekaterinburg", "Yekaterinburg", "YEKT"):
+        assert convert("15.00", tz).json()["time"] == "20.00"
+
+
+def test_convert_crosses_midnight():
+    data = convert("22.30", "Владивосток").json()
+    assert data["time"] == "08.30"
+    assert data["day_shift"] == 1
+
+
+def test_convert_invalid_input():
+    assert convert("25.00", "Москва").status_code == 422
+    assert convert("пятнадцать", "Москва").status_code == 422
+    assert convert("15.00", "Атлантида").status_code == 422
