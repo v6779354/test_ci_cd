@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
+
+from app.timezones import find_zone, parse_time
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -51,4 +53,32 @@ def get_datetime() -> dict:
         "time": local.time().isoformat(),
         "timezone": local.tzname(),
         "iso": local.isoformat(),
+    }
+
+
+@app.get("/convert")
+def convert_time(
+    time: str = Query(..., description="Время UTC: 15.00, 15:00 или 15:00:30", examples=["15.00"]),
+    tz: str = Query(..., description="Город, IANA-имя или аббревиатура", examples=["Екатеринбург"]),
+) -> dict:
+    parsed = parse_time(time)
+    if parsed is None:
+        raise HTTPException(422, f"Не удалось разобрать время '{time}', ожидается формат 15.00 или 15:00")
+    zone = find_zone(tz)
+    if zone is None:
+        raise HTTPException(422, f"Неизвестный часовой пояс '{tz}'")
+
+    utc_time, sep = parsed
+    # Дата нужна, чтобы учесть летнее время: берём сегодняшнюю по UTC.
+    source = datetime.combine(datetime.now(timezone.utc).date(), utc_time, timezone.utc)
+    target = source.astimezone(zone)
+    fmt = f"%H{sep}%M{sep}%S" if utc_time.second else f"%H{sep}%M"
+    offset = target.strftime("%z")
+    return {
+        "utc": source.strftime(fmt),
+        "time": target.strftime(fmt),
+        "timezone": zone.key,
+        "abbreviation": target.tzname(),
+        "utc_offset": f"{offset[:3]}:{offset[3:]}",
+        "day_shift": (target.date() - source.date()).days,
     }
