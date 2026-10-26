@@ -1,12 +1,21 @@
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(title="Server Time API")
 
 
-@app.get("/")
-def root() -> dict:
+@app.get("/", include_in_schema=False)
+def index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/health")
+def health() -> dict:
     return {"status": "ok"}
 
 
