@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 
-from app.timezones import find_zone, parse_time
+from app.timezones import find_zone, format_offset, list_cities, parse_time
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -73,12 +73,16 @@ def convert_time(
     source = datetime.combine(datetime.now(timezone.utc).date(), utc_time, timezone.utc)
     target = source.astimezone(zone)
     fmt = f"%H{sep}%M{sep}%S" if utc_time.second else f"%H{sep}%M"
-    offset = target.strftime("%z")
     return {
         "utc": source.strftime(fmt),
         "time": target.strftime(fmt),
         "timezone": zone.key,
         "abbreviation": target.tzname(),
-        "utc_offset": f"{offset[:3]}:{offset[3:]}",
+        "utc_offset": format_offset(target),
         "day_shift": (target.date() - source.date()).days,
     }
+
+
+@app.get("/timezones")
+def get_timezones() -> list[dict]:
+    return list_cities()

@@ -107,6 +107,76 @@
     font-size: 14px;
     color: var(--muted);
   }
+  .converter {
+    margin-bottom: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+  }
+  .converter h2 {
+    margin: 0 0 12px;
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .fields {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    gap: 12px;
+  }
+  .field span {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .field input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 17px;
+    font-variant-numeric: tabular-nums;
+  }
+  .field input:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+    border-color: transparent;
+  }
+  .result {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 12px;
+    min-height: 56px;
+    margin-top: 14px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: var(--bg);
+  }
+  .result .big {
+    font-size: 32px;
+    font-weight: 600;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+  .result .meta { font-size: 14px; color: var(--muted); }
+  .result .shift {
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--card);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .result.err { color: var(--err); font-size: 15px; align-items: center; }
+  @media (max-width: 420px) {
+    .fields { grid-template-columns: minmax(0, 1fr); }
+  }
   footer {
     display: flex;
     flex-wrap: wrap;
@@ -163,6 +233,23 @@
       <div class="row"><span>Прогресс года</span><span id="year-pct">—</span></div>
       <div class="bar"><div class="fill" id="year-fill"></div></div>
     </div>
+
+    <section class="converter">
+      <h2>Конвертер из UTC</h2>
+      <div class="fields">
+        <label class="field">
+          <span>Время UTC</span>
+          <input type="time" id="conv-time" required>
+        </label>
+        <label class="field">
+          <span>Город или часовой пояс</span>
+          <input type="text" id="conv-tz" list="cities" value="Екатеринбург"
+                 placeholder="Москва, New York, MSK…" autocomplete="off" spellcheck="false">
+        </label>
+      </div>
+      <datalist id="cities"></datalist>
+      <div class="result" id="conv-result" aria-live="polite"></div>
+    </section>
 
     <footer>
       <span class="status" id="status">Подключение…</span>
@@ -249,7 +336,90 @@
     $("year-fill").style.width = pct + "%";
   }
 
-  sync().then(render);
+  // Конвертер: пересчитывает при каждом изменении полей.
+  const convTime = $("conv-time");
+  const convTz = $("conv-tz");
+  const convResult = $("conv-result");
+  let convTimer = null;
+  let convRequest = 0;
+
+  function dayShiftLabel(n) {
+    if (n === 0) return "";
+    const abs = Math.abs(n);
+    const word = abs === 1 ? "день" : abs < 5 ? "дня" : "дней";
+    return (n > 0 ? "+" : "−") + abs + " " + word;
+  }
+
+  async function convert() {
+    const time = convTime.value;
+    const tz = convTz.value.trim();
+    if (!time || !tz) {
+      convResult.className = "result";
+      convResult.textContent = "";
+      return;
+    }
+    const id = ++convRequest;
+    try {
+      const params = new URLSearchParams({ time, tz });
+      const response = await fetch("/convert?" + params);
+      const data = await response.json();
+      if (id !== convRequest) return;
+      if (!response.ok) {
+        convResult.className = "result err";
+        convResult.textContent = typeof data.detail === "string" ? data.detail : "Некорректный запрос";
+        return;
+      }
+      convResult.className = "result";
+      convResult.innerHTML = "";
+      const big = document.createElement("span");
+      big.className = "big";
+      big.textContent = data.time;
+      const meta = document.createElement("span");
+      meta.className = "meta";
+      meta.textContent = data.timezone + " · UTC" + data.utc_offset;
+      convResult.append(big, meta);
+      const shift = dayShiftLabel(data.day_shift);
+      if (shift) {
+        const badge = document.createElement("span");
+        badge.className = "shift";
+        badge.textContent = shift;
+        convResult.append(badge);
+      }
+    } catch (e) {
+      if (id !== convRequest) return;
+      convResult.className = "result err";
+      convResult.textContent = "Сервер недоступен";
+    }
+  }
+
+  function scheduleConvert() {
+    clearTimeout(convTimer);
+    convTimer = setTimeout(convert, 200);
+  }
+
+  async function loadCities() {
+    try {
+      const cities = await fetch("/timezones").then((r) => r.json());
+      const list = $("cities");
+      for (const city of cities) {
+        const option = document.createElement("option");
+        option.value = city.name;
+        option.label = "UTC" + city.utc_offset;
+        list.append(option);
+      }
+    } catch (e) {}
+  }
+
+  convTime.addEventListener("input", scheduleConvert);
+  convTz.addEventListener("input", scheduleConvert);
+  loadCities();
+
+  sync().then(() => {
+    render();
+    const nowUtc = new Date(Date.now() + (clockOffset ?? 0));
+    convTime.value = pad(nowUtc.getUTCHours()) + ":" + pad(nowUtc.getUTCMinutes());
+    convert();
+  });
   setInterval(render, 250);
   setInterval(sync, 60000);
 </script>

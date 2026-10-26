@@ -1,5 +1,5 @@
 import re
-from datetime import time
+from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo, available_timezones
 
 # Русские названия городов и регионов -> часовой пояс IANA.
@@ -129,6 +129,41 @@ def _build_index() -> dict[str, str]:
 
 
 ZONE_INDEX = _build_index()
+
+# Сокращения и второстепенные названия: работают при поиске, но не попадают в список городов.
+RU_ALIASES = {"петербург", "питер", "спб", "гринвич"}
+LOWERCASE_PARTS = {"на"}
+
+
+def _display_name(name: str) -> str:
+    def cap(part: str) -> str:
+        return part if part in LOWERCASE_PARTS else part[:1].upper() + part[1:]
+
+    return " ".join("-".join(cap(p) for p in word.split("-")) for word in name.split(" "))
+
+
+def format_offset(dt: datetime) -> str:
+    offset = dt.strftime("%z")
+    return f"{offset[:3]}:{offset[3:]}"
+
+
+def list_cities() -> list[dict]:
+    now = datetime.now(timezone.utc)
+    cities = []
+    for name, zone in RU_NAMES.items():
+        if name in RU_ALIASES:
+            continue
+        local = now.astimezone(ZoneInfo(zone))
+        cities.append({
+            "name": _display_name(name),
+            "zone": zone,
+            "utc_offset": format_offset(local),
+            "_offset": local.utcoffset(),
+        })
+    cities.sort(key=lambda c: (c["_offset"], c["name"]))
+    for city in cities:
+        del city["_offset"]
+    return cities
 
 
 def find_zone(name: str) -> ZoneInfo | None:
